@@ -10,6 +10,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.1'
+          cache: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -17,16 +18,16 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: go test -race ./...
       - run: go vet ./...
-      - run: go test ./cmd/bastion -fuzz=FuzzRelay -fuzztime=10s
+      - run: go test ./cmd/bridge -fuzz=FuzzRelay -fuzztime=10s
       - run: npm ci && npm run build && npm test
         working-directory: web
       - run: docker compose up --build -d --wait
-      - run: npm run test:e2e
+      - run: npm run test:e2e && npm run example
         working-directory: web
-      - run: docker compose up -d --force-recreate --wait bastion
+      - run: docker compose up -d --force-recreate --wait bridge
         env:
           TUNNEL_TOKEN: local-ci-test-token
-      - run: npm run test:e2e
+      - run: npm run test:e2e && npm run example
         working-directory: web
         env:
           TUNNEL_TOKEN: local-ci-test-token
