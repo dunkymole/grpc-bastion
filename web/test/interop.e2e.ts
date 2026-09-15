@@ -7,6 +7,13 @@ import { DemoService } from "../src/gen/demo_pb.js";
 import { runChecks } from "../src/verify.js";
 const url = process.env.TUNNEL_URL ?? "ws://localhost:8080/tunnel";
 test(
+  "invalid tunnel token is rejected",
+  { skip: !process.env.TUNNEL_TOKEN, timeout: 10000 },
+  async () => {
+    await assert.rejects(openChannel(url, "wrong-token"));
+  },
+);
+test(
   "Python interoperability through a single bastion tunnel",
   { timeout: 30000 },
   async () => {

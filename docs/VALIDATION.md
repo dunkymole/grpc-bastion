@@ -6,7 +6,7 @@ with Go 1.27.1, Python 3.12, grpcio 1.84.0, Node 24.19.0, and Chrome.
 ## Executed checks
 
 - Both Compose containers built and became healthy.
-- Go unit/integration tests and `go vet` passed.
+- Go unit/integration tests, Linux race detection, and `go vet` passed.
 - A three-second parser fuzz run completed 122,421 executions without a failure.
   This is a smoke test, not sustained fuzzing or conformance certification.
 - TypeScript strict compilation and gRPC framing/status unit tests passed.
@@ -15,6 +15,8 @@ with Go 1.27.1, Python 3.12, grpcio 1.84.0, Node 24.19.0, and Chrome.
   browser HTTP/2 client; the page displayed `ALL CHECKS PASSED`.
 - The connection-loss test rejected an in-flight call and successfully created a
   fresh session without replaying the old operation.
+- A separate token-authenticated bastion passed the same suite and rejected an
+  incorrect token before upgrading the connection.
 
 The interoperability checks cover all four RPC patterns, responses before bidi
 request completion, native trailers, 16 concurrent RPCs on one connection, a
@@ -37,8 +39,8 @@ kernel socket memory, and a different platform change the result. RSS excludes
 some kernel memory. Docker's older statistics endpoint returned zeros on this
 host, so the measurement used the process's own Linux status file instead.
 
-The initial scratch image was 7,835,055 bytes including the demo assets; adding
-license notices and later rebuilds can change that slightly. The Go binary has
+The scratch image with the demo assets and license notices was 7,867,236 bytes.
+Later rebuilds can change that slightly. The Go binary has
 no third-party modules and is built with `CGO_ENABLED=0`.
 
 To reproduce the connection sample, start the stack with project name
