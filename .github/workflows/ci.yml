@@ -1,0 +1,34 @@
+name: CI
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: go test ./cmd/bastion -fuzz=FuzzRelay -fuzztime=10s
+      - run: npm ci && npm run build && npm test
+        working-directory: web
+      - run: docker compose up --build -d --wait
+      - run: npm run test:e2e
+        working-directory: web
+      - run: docker compose up -d --force-recreate --wait bastion
+        env:
+          TUNNEL_TOKEN: local-ci-test-token
+      - run: npm run test:e2e
+        working-directory: web
+        env:
+          TUNNEL_TOKEN: local-ci-test-token
+      - if: always()
+        run: docker compose logs && docker compose down
