@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>gRPC Bastion — live transport lab</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font: 16px system-ui;
+        color: #e9edf5;
+        background: #0b111b;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      main {
+        max-width: 1120px;
+        margin: auto;
+        padding: 48px 24px;
+      }
+      h1 {
+        font-size: 48px;
+        letter-spacing: -2px;
+        margin: 12px 0;
+      }
+      h2 {
+        font-size: 19px;
+        margin: 0 0 12px;
+      }
+      p {
+        line-height: 1.65;
+        color: #aab7cb;
+      }
+      .eyebrow {
+        color: #63dbb0;
+        font: 12px monospace;
+        letter-spacing: 3px;
+      }
+      .architecture {
+        display: flex;
+        gap: 15px;
+        align-items: center;
+        margin: 28px 0;
+        color: #99aec9;
+        font: 14px monospace;
+      }
+      .architecture strong {
+        padding: 14px;
+        background: #172235;
+        border-radius: 8px;
+        color: #e9edf5;
+      }
+      .connection {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        border-top: 1px solid #27354a;
+        border-bottom: 1px solid #27354a;
+        padding: 20px 0;
+        margin-bottom: 26px;
+      }
+      input {
+        background: #111c2b;
+        border: 1px solid #34465e;
+        border-radius: 6px;
+        color: #fff;
+        padding: 11px;
+        font: inherit;
+        min-width: 0;
+      }
+      button {
+        background: #64e3b1;
+        border: 0;
+        border-radius: 6px;
+        color: #08291d;
+        padding: 11px 17px;
+        font-weight: 650;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #24344d;
+        color: #e9edf5;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+      .card {
+        border: 1px solid #26354a;
+        border-radius: 12px;
+        padding: 24px;
+        background: #101a28;
+      }
+      .card p {
+        font-size: 14px;
+        min-height: 42px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .row input {
+        flex: 1;
+      }
+      output {
+        display: block;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font: 13px/1.7 monospace;
+        color: #b0d3f5;
+        background: #09111c;
+        min-height: 95px;
+        max-height: 220px;
+        overflow: auto;
+        padding: 13px;
+        margin-top: 16px;
+        border-radius: 6px;
+      }
+      .pill {
+        color: #65e2b1;
+        font-size: 13px;
+      }
+      .footer {
+        font-size: 13px;
+        margin-top: 26px;
+      }
+      #status {
+        margin-left: auto;
+      }
+      #checks {
+        margin-top: 18px;
+      }
+      a {
+        color: #65e2b1;
+      }
+      @media (max-width: 720px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        h1 {
+          font-size: 36px;
+        }
+        .architecture {
+          font-size: 11px;
+          gap: 5px;
+        }
+        .architecture strong {
+          padding: 9px;
+        }
+        #status {
+          margin-left: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">OPEN SOURCE / TRANSPORT LAB</div>
+      <h1>Native gRPC. In your browser.</h1>
+      <p>
+        One connection. Four RPC patterns. A tiny bastion that just moves bytes.
+      </p>
+      <div class="architecture">
+        <strong>Browser · HTTP/2</strong><span>← WebSocket →</span
+        ><strong>Go bastion</strong><span>← h2c →</span
+        ><strong>Python · gRPC</strong>
+      </div>
+      <div class="connection">
+        <label for="token">Tunnel token</label
+        ><input
+          id="token"
+          type="password"
+          placeholder="Optional for local demo"
+          autocomplete="off"
+        /><button id="connect">Connect</button
+        ><button id="disconnect" class="secondary" disabled>Disconnect</button
+        ><span id="status" role="status">Disconnected</span>
+      </div>
+      <div class="grid">
+        <section class="card">
+          <h2>01 / Unary echo</h2>
+          <p>
+            A typed request and response, with the backend's native gRPC
+            trailers.
+          </p>
+          <div class="row">
+            <input
+              id="echo-input"
+              aria-label="Echo message"
+              value="Hello from the browser"
+            /><button id="echo" data-rpc disabled>Echo</button>
+          </div>
+          <output id="echo-output" aria-live="polite"
+            >Waiting for a call.</output
+          >
+        </section>
+        <section class="card">
+          <h2>02 / Server stream</h2>
+          <p>
+            Watch responses arrive over time. Cancel this RPC without closing
+            the shared connection.
+          </p>
+          <div class="row">
+            <button id="count" data-rpc disabled>Start counting</button
+            ><button id="cancel-count" class="secondary" disabled>
+              Cancel stream
+            </button>
+          </div>
+          <output id="count-output" aria-live="polite"
+            >Waiting for a stream.</output
+          >
+        </section>
+        <section class="card">
+          <h2>03 / Client stream</h2>
+          <p>
+            Send five numbers, half-close the request, and receive their sum
+            from Python.
+          </p>
+          <button id="collect" data-rpc disabled>Send 1 + 2 + 3 + 4 + 5</button
+          ><output id="collect-output" aria-live="polite"
+            >Waiting for input.</output
+          >
+        </section>
+        <section class="card">
+          <h2>04 / Bidirectional chat</h2>
+          <p>
+            Keep sending while replies arrive. Finish half-closes the request
+            and preserves the response.
+          </p>
+          <div class="row">
+            <input
+              id="chat-input"
+              aria-label="Chat message"
+              value="Are you there, Python?"
+            /><button id="chat" data-rpc disabled>Send</button
+            ><button id="finish" class="secondary" disabled>Finish</button>
+          </div>
+          <output id="chat-output" aria-live="polite"
+            >Waiting for a conversation.</output
+          >
+        </section>
+      </div>
+      <div id="checks">
+        <button id="verify" data-rpc disabled>
+          Run interoperability checks</button
+        ><output id="check-output" aria-live="polite"
+          >Checks exercise the real Python service over this single
+          connection.</output
+        >
+      </div>
+      <p class="footer">
+        Prototype v0.1 · No RPC translation · No automatic retries ·
+        <a href="https://github.com/dunkymole/grpc-bastion">Source & design</a>
+      </p>
+    </main>
+    <script type="module" src="/demo.js"></script>
+  </body>
+</html>

@@ -1,0 +1,27 @@
+services:
+  bastion:
+    build: .
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      UPSTREAM: backend:50051
+      ALLOWED_ORIGIN: http://localhost:8080
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+      GOMEMLIMIT: 48MiB
+    depends_on:
+      backend:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 64m
+    pids_limit: 128
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 192m
+    pids_limit: 128

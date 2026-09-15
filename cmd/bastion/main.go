@@ -1,0 +1,437 @@
+// grpc-bastion is an application-blind WebSocket to TCP tunnel.
+package main
+
+import (
+	"bufio"
+	"context"
+	"crypto/sha1"
+	"crypto/subtle"
+	"crypto/tls"
+	"encoding/base64"
+	"encoding/binary"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+	"unicode/utf8"
+)
+
+const protocol = "grpc-tunnel.v1"
+const bufferSize = 16 * 1024
+const maxFrame = 1 << 20
+
+type config struct {
+	upstream, origin, token string
+	maxConnections          int
+	upstreamTLS             bool
+}
+
+type gateway struct {
+	config
+	slots    chan struct{}
+	mu       sync.Mutex
+	active   map[net.Conn]struct{}
+	stopping bool
+}
+
+func newGateway(c config) *gateway {
+	return &gateway{config: c, slots: make(chan struct{}, c.maxConnections), active: make(map[net.Conn]struct{})}
+}
+func contains(value, token string) bool {
+	for _, v := range strings.Split(value, ",") {
+		if strings.EqualFold(strings.TrimSpace(v), token) {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/tunnel" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != "GET" || !contains(r.Header.Get("Connection"), "upgrade") || !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		http.Error(w, "WebSocket upgrade required", http.StatusBadRequest)
+		return
+	}
+	key, err := base64.StdEncoding.DecodeString(r.Header.Get("Sec-WebSocket-Key"))
+	if err != nil || len(key) != 16 || r.Header.Get("Sec-WebSocket-Version") != "13" {
+		http.Error(w, "invalid WebSocket handshake", 400)
+		return
+	}
+	// Exact origin allowlist, including scheme and port. Native clients omit Origin.
+	if origin := r.Header.Get("Origin"); origin != "" && origin != g.origin {
+		http.Error(w, "origin denied", 403)
+		return
+	}
+	offered := strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",")
+	selected, authenticated := false, g.token == ""
+	for _, p := range offered {
+		p = strings.TrimSpace(p)
+		if p == protocol {
+			selected = true
+		}
+		if strings.HasPrefix(p, "auth.") && subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(p, "auth.")), []byte(g.token)) == 1 {
+			authenticated = true
+		}
+	}
+	if !authenticated {
+		http.Error(w, "unauthorized", 401)
+		return
+	}
+	if !selected {
+		http.Error(w, "unsupported tunnel profile", 400)
+		return
+	}
+	select {
+	case g.slots <- struct{}{}:
+		defer func() { <-g.slots }()
+	default:
+		http.Error(w, "connection capacity reached", 503)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	var upstream net.Conn
+	if g.upstreamTLS {
+		d := &tls.Dialer{NetDialer: &net.Dialer{}, Config: &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"h2"}}}
+		upstream, err = d.DialContext(ctx, "tcp", g.upstream)
+		if err == nil && upstream.(*tls.Conn).ConnectionState().NegotiatedProtocol != "h2" {
+			upstream.Close()
+			err = errors.New("upstream did not negotiate h2")
+		}
+	} else {
+		upstream, err = (&net.Dialer{}).DialContext(ctx, "tcp", g.upstream)
+	}
+	if err != nil {
+		http.Error(w, "upstream unavailable", 502)
+		return
+	}
+	defer upstream.Close()
+	h, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "upgrade unavailable", 500)
+		return
+	}
+	conn, rw, err := h.Hijack()
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	g.mu.Lock()
+	if g.stopping {
+		g.mu.Unlock()
+		return
+	}
+	g.active[conn] = struct{}{}
+	g.mu.Unlock()
+	defer func() { g.mu.Lock(); delete(g.active, conn); g.mu.Unlock() }()
+	sum := sha1.Sum([]byte(r.Header.Get("Sec-WebSocket-Key") + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\nSec-WebSocket-Protocol: %s\r\n\r\n", base64.StdEncoding.EncodeToString(sum[:]), protocol)
+	if rw.Flush() != nil {
+		return
+	}
+	conn.SetDeadline(time.Time{})
+	ws := &socket{conn: conn, reader: rw.Reader}
+	done := make(chan struct{})
+	defer close(done)
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	go func() {
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if ws.writeFrame(9, []byte("alive")) != nil {
+					conn.Close()
+					return
+				}
+			}
+		}
+	}()
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		defer conn.Close()
+		buf := make([]byte, bufferSize)
+		for {
+			n, e := upstream.Read(buf)
+			if n > 0 {
+				if ws.writeFrame(2, buf[:n]) != nil {
+					return
+				}
+			}
+			if e != nil {
+				_ = ws.closeWith(1011)
+				return
+			}
+		}
+	}()
+	err = ws.relay(upstream)
+	if err != nil && !errors.Is(err, io.EOF) {
+		_ = ws.closeWith(1002)
+	}
+	upstream.Close()
+	conn.Close()
+	<-finished
+}
+
+func (g *gateway) stop() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.stopping = true
+	for c := range g.active {
+		c.Close()
+	}
+}
+
+type socket struct {
+	conn    net.Conn
+	reader  *bufio.Reader
+	writeMu sync.Mutex
+}
+
+func (s *socket) writeFrame(op byte, p []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	s.conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	var header [10]byte
+	header[0] = 0x80 | op
+	n := 2
+	if len(p) < 126 {
+		header[1] = byte(len(p))
+	} else if len(p) <= 65535 {
+		header[1] = 126
+		binary.BigEndian.PutUint16(header[2:4], uint16(len(p)))
+		n = 4
+	} else {
+		header[1] = 127
+		binary.BigEndian.PutUint64(header[2:10], uint64(len(p)))
+		n = 10
+	}
+	if err := writeAll(s.conn, header[:n]); err != nil {
+		return err
+	}
+	return writeAll(s.conn, p)
+}
+func writeAll(w io.Writer, p []byte) error {
+	for len(p) > 0 {
+		n, e := w.Write(p)
+		if e != nil {
+			return e
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		p = p[n:]
+	}
+	return nil
+}
+func (s *socket) closeWith(code uint16) error {
+	var p [2]byte
+	binary.BigEndian.PutUint16(p[:], code)
+	return s.writeFrame(8, p[:])
+}
+
+// Payloads are unmasked and forwarded in fixed chunks, never buffered as messages.
+// Fragment boundaries are irrelevant to the inner byte stream. Control frames
+// remain outside it and may be interleaved between fragments.
+func (s *socket) relay(upstream net.Conn) error {
+	buf := make([]byte, bufferSize)
+	fragmented := false
+	for {
+		var h [2]byte
+		if _, e := io.ReadFull(s.reader, h[:]); e != nil {
+			return e
+		}
+		fin, op := h[0]&0x80 != 0, h[0]&15
+		if h[0]&0x70 != 0 || h[1]&0x80 == 0 {
+			return errors.New("reserved bits or missing mask")
+		}
+		length := uint64(h[1] & 127)
+		if length == 126 {
+			var p [2]byte
+			if _, e := io.ReadFull(s.reader, p[:]); e != nil {
+				return e
+			}
+			length = uint64(binary.BigEndian.Uint16(p[:]))
+			if length < 126 {
+				return errors.New("noncanonical length")
+			}
+		} else if length == 127 {
+			var p [8]byte
+			if _, e := io.ReadFull(s.reader, p[:]); e != nil {
+				return e
+			}
+			length = binary.BigEndian.Uint64(p[:])
+			if length < 65536 {
+				return errors.New("noncanonical length")
+			}
+		}
+		if length > maxFrame {
+			return errors.New("frame limit")
+		}
+		control := op >= 8
+		if control && (!fin || length > 125) {
+			return errors.New("invalid control frame")
+		}
+		switch op {
+		case 0:
+			if !fragmented {
+				return errors.New("unexpected continuation")
+			}
+			if fin {
+				fragmented = false
+			}
+		case 2:
+			if fragmented {
+				return errors.New("interleaved data message")
+			}
+			fragmented = !fin
+		case 8, 9, 10:
+		default:
+			return errors.New("unsupported opcode")
+		}
+		var mask [4]byte
+		if _, e := io.ReadFull(s.reader, mask[:]); e != nil {
+			return e
+		}
+		offset := uint64(0)
+		for offset < length {
+			count := min(uint64(len(buf)), length-offset)
+			p := buf[:int(count)]
+			if _, e := io.ReadFull(s.reader, p); e != nil {
+				return e
+			}
+			for i := range p {
+				p[i] ^= mask[(offset+uint64(i))%4]
+			}
+			if !control {
+				upstream.SetWriteDeadline(time.Now().Add(30 * time.Second))
+				if e := writeAll(upstream, p); e != nil {
+					return e
+				}
+			}
+			offset += count
+		}
+		if control {
+			p := buf[:int(length)]
+			switch op {
+			case 8:
+				if length == 1 {
+					return errors.New("invalid close payload")
+				}
+				if length >= 2 {
+					code := binary.BigEndian.Uint16(p)
+					if !validClose(code) || !utf8.Valid(p[2:]) {
+						return errors.New("invalid close code or UTF-8")
+					}
+				}
+				_ = s.writeFrame(8, p)
+				return io.EOF
+			case 9:
+				if e := s.writeFrame(10, p); e != nil {
+					return e
+				}
+			case 10:
+				if string(p) == "alive" {
+					s.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+				}
+			}
+		}
+	}
+}
+func validClose(c uint16) bool {
+	return c >= 3000 && c <= 4999 || c >= 1000 && c <= 1014 && c != 1004 && c != 1005 && c != 1006
+}
+func env(name, fallback string) string {
+	if s := os.Getenv(name); s != "" {
+		return s
+	}
+	return fallback
+}
+
+func main() {
+	listen := flag.String("listen", env("LISTEN", "127.0.0.1:8080"), "HTTP listen address")
+	upstream := flag.String("upstream", env("UPSTREAM", "127.0.0.1:50051"), "fixed upstream TCP address")
+	origin := flag.String("origin", env("ALLOWED_ORIGIN", "http://localhost:8080"), "exact allowed browser origin")
+	assets := flag.String("assets", env("ASSETS", "web/dist"), "demo static directory")
+	cert := flag.String("tls-cert", os.Getenv("TLS_CERT"), "PEM certificate for HTTPS/WSS")
+	key := flag.String("tls-key", os.Getenv("TLS_KEY"), "PEM key for HTTPS/WSS")
+	tlsUp := flag.Bool("upstream-tls", os.Getenv("UPSTREAM_TLS") == "true", "verify TLS and h2 ALPN upstream")
+	maxConns := flag.Int("max-connections", 256, "maximum concurrent tunnels")
+	healthcheck := flag.Bool("healthcheck", false, "check local HTTP readiness and exit")
+	flag.Parse()
+	if *healthcheck {
+		c := http.Client{Timeout: 2 * time.Second}
+		r, e := c.Get("http://127.0.0.1:8080/healthz")
+		if e != nil {
+			os.Exit(1)
+		}
+		r.Body.Close()
+		if r.StatusCode != 200 {
+			os.Exit(1)
+		}
+		return
+	}
+	if *maxConns < 1 {
+		log.Fatal("max-connections must be positive")
+	}
+	token := os.Getenv("TUNNEL_TOKEN")
+	for _, r := range token {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			log.Fatal("TUNNEL_TOKEN must be base64url-safe")
+		}
+	}
+	g := newGateway(config{*upstream, *origin, token, *maxConns, *tlsUp})
+	mux := http.NewServeMux()
+	mux.Handle("/tunnel", g)
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		c, e := net.DialTimeout("tcp", *upstream, time.Second)
+		if e != nil {
+			http.Error(w, "upstream unavailable", 503)
+			return
+		}
+		c.Close()
+		w.Write([]byte("ok\n"))
+	})
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("bastion_active_tunnels " + strconv.Itoa(len(g.slots)) + "\n"))
+	})
+	mux.Handle("/", http.FileServer(http.Dir(*assets)))
+	server := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-signals
+		g.stop()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		server.Shutdown(ctx)
+	}()
+	log.Printf("grpc-bastion listening on %s; fixed upstream %s; max tunnels %d", *listen, *upstream, *maxConns)
+	var err error
+	if *cert != "" {
+		err = server.ListenAndServeTLS(*cert, *key)
+	} else {
+		err = server.ListenAndServe()
+	}
+	if !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
+	}
+}

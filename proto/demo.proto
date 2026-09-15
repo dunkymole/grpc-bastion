@@ -1,0 +1,15 @@
+syntax = "proto3";
+package bastion.demo.v1;
+
+service DemoService {
+  rpc Echo(Message) returns (Message);
+  rpc Count(Message) returns (stream Message);
+  rpc Collect(stream Message) returns (Message);
+  rpc Chat(stream Message) returns (stream Message);
+}
+
+message Message {
+  string text = 1;
+  int32 number = 2;
+  int32 delay_ms = 3;
+}
