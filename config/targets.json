@@ -1,0 +1,5 @@
+{
+  "targets": {
+    "python-demo:50051": { "tls": false }
+  }
+}

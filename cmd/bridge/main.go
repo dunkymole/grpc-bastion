@@ -1,4 +1,4 @@
-// grpc-bastion is an application-blind WebSocket to TCP tunnel.
+// grpc-bridge is an application-blind WebSocket to TCP tunnel.
 package main
 
 import (
@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -34,6 +36,64 @@ type config struct {
 	upstream, origin, token string
 	maxConnections          int
 	upstreamTLS             bool
+	targetsFile             string
+}
+
+type targetPolicy struct {
+	TLS bool `json:"tls"`
+}
+
+// Read a bounded policy snapshot for each new destination selection. Operators
+// can atomically replace the file without restarting existing connections.
+func (g *gateway) destination(r *http.Request) (string, bool, int) {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil || len(query["target"]) > 1 {
+		return "", false, 400
+	}
+	target := query.Get("target")
+	if target == "" {
+		target = g.upstream
+	}
+	if len(target) > 320 {
+		return "", false, 400
+	}
+	host, port, err := net.SplitHostPort(target)
+	p, portErr := strconv.Atoi(port)
+	if err != nil || portErr != nil || p < 1 || p > 65535 || host == "" || strings.ContainsAny(host, "/@?#\\ \t\r\n") {
+		return "", false, 400
+	}
+	if target == g.upstream {
+		return target, g.upstreamTLS, 0
+	}
+	if g.targetsFile == "" {
+		return "", false, 403
+	}
+	file, err := os.Open(g.targetsFile)
+	if err != nil {
+		return "", false, 503
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, 65537))
+	if err != nil || len(data) > 65536 {
+		return "", false, 503
+	}
+	var policy struct {
+		Targets map[string]targetPolicy `json:"targets"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&policy) != nil {
+		return "", false, 503
+	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return "", false, 503
+	}
+	allowed, ok := policy.Targets[target]
+	if !ok {
+		return "", false, 403
+	}
+	return target, allowed.TLS, 0
 }
 
 type gateway struct {
@@ -76,11 +136,11 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	offered := strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",")
-	selected, authenticated := false, g.token == ""
+	selected, authenticated := "", g.token == ""
 	for _, p := range offered {
 		p = strings.TrimSpace(p)
-		if p == protocol {
-			selected = true
+		if selected == "" && p == protocol {
+			selected = p
 		}
 		if strings.HasPrefix(p, "auth.") && subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(p, "auth.")), []byte(g.token)) == 1 {
 			authenticated = true
@@ -90,7 +150,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", 401)
 		return
 	}
-	if !selected {
+	if selected == "" {
 		http.Error(w, "unsupported tunnel profile", 400)
 		return
 	}
@@ -102,17 +162,24 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	destination, useTLS, status := g.destination(r)
+	if status != 0 {
+		cancel()
+		http.Error(w, "destination unavailable or not allowed", status)
+		return
+	}
 	defer cancel()
 	var upstream net.Conn
-	if g.upstreamTLS {
-		d := &tls.Dialer{NetDialer: &net.Dialer{}, Config: &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"h2"}}}
-		upstream, err = d.DialContext(ctx, "tcp", g.upstream)
+	if useTLS {
+		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"h2"}}
+		d := &tls.Dialer{NetDialer: &net.Dialer{}, Config: tlsConfig}
+		upstream, err = d.DialContext(ctx, "tcp", destination)
 		if err == nil && upstream.(*tls.Conn).ConnectionState().NegotiatedProtocol != "h2" {
 			upstream.Close()
 			err = errors.New("upstream did not negotiate h2")
 		}
 	} else {
-		upstream, err = (&net.Dialer{}).DialContext(ctx, "tcp", g.upstream)
+		upstream, err = (&net.Dialer{}).DialContext(ctx, "tcp", destination)
 	}
 	if err != nil {
 		http.Error(w, "upstream unavailable", 502)
@@ -139,7 +206,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() { g.mu.Lock(); delete(g.active, conn); g.mu.Unlock() }()
 	sum := sha1.Sum([]byte(r.Header.Get("Sec-WebSocket-Key") + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\nSec-WebSocket-Protocol: %s\r\n\r\n", base64.StdEncoding.EncodeToString(sum[:]), protocol)
+	fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\nSec-WebSocket-Protocol: %s\r\n\r\n", base64.StdEncoding.EncodeToString(sum[:]), selected)
 	if rw.Flush() != nil {
 		return
 	}
@@ -367,7 +434,8 @@ func env(name, fallback string) string {
 
 func main() {
 	listen := flag.String("listen", env("LISTEN", "127.0.0.1:8080"), "HTTP listen address")
-	upstream := flag.String("upstream", env("UPSTREAM", "127.0.0.1:50051"), "fixed upstream TCP address")
+	upstream := flag.String("upstream", env("UPSTREAM", "127.0.0.1:50051"), "default upstream TCP address")
+	targetsFile := flag.String("targets-file", os.Getenv("TARGETS_FILE"), "JSON allowed destinations, reloaded on each new target selection")
 	origin := flag.String("origin", env("ALLOWED_ORIGIN", "http://localhost:8080"), "exact allowed browser origin")
 	assets := flag.String("assets", env("ASSETS", "web/dist"), "demo static directory")
 	cert := flag.String("tls-cert", os.Getenv("TLS_CERT"), "PEM certificate for HTTPS/WSS")
@@ -397,7 +465,7 @@ func main() {
 			log.Fatal("TUNNEL_TOKEN must be base64url-safe")
 		}
 	}
-	g := newGateway(config{*upstream, *origin, token, *maxConns, *tlsUp})
+	g := newGateway(config{upstream: *upstream, origin: *origin, token: token, maxConnections: *maxConns, upstreamTLS: *tlsUp, targetsFile: *targetsFile})
 	mux := http.NewServeMux()
 	mux.Handle("/tunnel", g)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -411,7 +479,7 @@ func main() {
 	})
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("bastion_active_tunnels " + strconv.Itoa(len(g.slots)) + "\n"))
+		w.Write([]byte("bridge_active_tunnels " + strconv.Itoa(len(g.slots)) + "\n"))
 	})
 	mux.Handle("/", http.FileServer(http.Dir(*assets)))
 	server := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
@@ -424,7 +492,7 @@ func main() {
 		defer cancel()
 		server.Shutdown(ctx)
 	}()
-	log.Printf("grpc-bastion listening on %s; fixed upstream %s; max tunnels %d", *listen, *upstream, *maxConns)
+	log.Printf("grpc-bridge listening on %s; default upstream %s; max tunnels %d", *listen, *upstream, *maxConns)
 	var err error
 	if *cert != "" {
 		err = server.ListenAndServeTLS(*cert, *key)

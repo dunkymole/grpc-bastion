@@ -4,7 +4,7 @@ This is an early prototype. The default Compose deployment is local-only.
 Before exposing it beyond loopback, configure TLS, an exact allowed origin,
 authentication, upstream network restrictions, and deployment resource limits.
 
-The bastion does not authorize individual RPC methods. Enforce application
+The bridge does not authorize individual RPC methods. Enforce application
 authorization in the gRPC service. Browser Origin filtering does not authenticate
 native clients. Do not put sensitive production data into the demo service.
 

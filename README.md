@@ -1,8 +1,8 @@
-# gRPC Bastion
+# gRPC Bridge
 
-**Native gRPC in the browser, through one WebSocket and a zero-dependency Go bastion.**
+**Native gRPC in the browser, through one WebSocket and a zero-dependency Go bridge.**
 
-The browser runs HTTP/2. The bastion unwraps WebSocket payloads and forwards the
+The browser runs HTTP/2. The bridge unwraps WebSocket payloads and forwards the
 bytes to an ordinary gRPC server. Protobuf messages, stream IDs, flow control,
 trailers, cancellation, and half-close remain native gRPC/HTTP/2.
 
@@ -13,7 +13,7 @@ Generated Protobuf types + Connect typed client
                      │
           one WebSocket (WSS with TLS)
                      │
-           Go bastion · opaque relay
+           Go bridge · opaque relay
                      │
               TCP / h2c (or TLS)
                      │
@@ -29,8 +29,8 @@ same standard gRPC service contracts as any other application.
 Install Docker with Compose v2, then:
 
 ```sh
-git clone https://github.com/dunkymole/grpc-bastion.git
-cd grpc-bastion
+git clone https://github.com/dunkymole/grpc-bridge.git
+cd grpc-bridge
 docker compose up --build -d
 ```
 
@@ -43,7 +43,7 @@ docker compose logs -f
 docker compose down
 ```
 
-Only the bastion's loopback port is published. Python is reachable inside the
+Only the bridge's loopback port is published. Python is reachable inside the
 Compose network; it exposes no host port. No API keys or cloud services required.
 
 ## What's implemented
@@ -56,15 +56,23 @@ Compose network; it exposes no host port. No API keys or cloud services required
 - A versioned tunnel profile, exact browser-origin checking, optional token auth.
 - Fixed-size relay buffers, connection admission limits, ping/pong, write deadlines.
 - HTTPS/WSS and verified TLS to the backend as deployment options.
-- Two non-root, read-only containers. The bastion is a static binary in `scratch`.
+- Client-selected backend addresses with a live, server-owned destination allowlist.
+- Two non-root, read-only containers. The bridge is a static binary in `scratch`.
 
-**Zero dependencies applies to the bastion:** Go standard library only, no Go
+**Zero dependencies applies to the bridge:** Go standard library only, no Go
 modules beyond this repository, no libc, shell, package manager, or runtime daemon
 inside its image. The browser and Python service intentionally use established
 Protobuf, HTTP/2, and gRPC libraries. Building requires toolchains; TLS trust uses
 the CA certificate bundle copied into the image.
 
 ## Typed client
+
+See the [runnable TypeScript examples](web/examples/client.ts) and
+[client addressing and routing guide](docs/CLIENT-AND-ROUTING.md). Run them with
+`cd web && npm ci && npm run example` while the Compose stack is running.
+The client sends the backend host and port in the WebSocket handshake. The bridge
+authorizes and resolves it. Edit `config/targets.json` to onboard backends without
+restarting the bridge. Destination selection is separate from gRPC metadata.
 
 ```ts
 import { createClient } from "@connectrpc/connect";
@@ -73,7 +81,9 @@ import { openChannel } from "./channel.js";
 import { createTunnelTransport } from "./transport.js";
 import { inputQueue } from "./queue.js";
 
-const channel = await openChannel("ws://localhost:8080/tunnel");
+const channel = await openChannel("ws://localhost:8080/tunnel", "", {
+  target: "python-demo:50051",
+});
 const client = createClient(DemoService, createTunnelTransport(channel));
 const input = inputQueue<{ text: string }>();
 
@@ -100,7 +110,7 @@ Requires Go 1.25+, Node 24+, and Python 3.12+. Container builds pin Go 1.27.1.
 ```sh
 go test ./...
 go vet ./...
-go test ./cmd/bastion -fuzz=FuzzRelay -fuzztime=10s
+go test ./cmd/bridge -fuzz=FuzzRelay -fuzztime=10s
 cd web
 npm ci
 npm run build
@@ -108,10 +118,11 @@ npm test
 npm run test:e2e    # running Compose stack required
 ```
 
-The end-to-end suite exercises Python through the actual bastion: all four RPC
+The end-to-end suite exercises Python through the actual bridge: all four RPC
 shapes, bidi responses before request half-close, 16 concurrent calls, a 180 KB
 message crossing flow-control windows, trailers, native errors, deadlines,
-cancellation, connection loss, and explicit reconnect. The page runs the same
+cancellation, connection loss, and explicit reconnect. It also adds a new backend and revokes its allowlist entry without restarting
+the bridge, while existing channels keep working. The page runs the same
 interoperability checks in a real browser.
 
 For code generation, after installing the backend requirements and web packages:
@@ -130,7 +141,8 @@ Generated source is checked in. The Python container regenerates from the same
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `LISTEN` / `-listen` | `127.0.0.1:8080` (image: `0.0.0.0:8080`) | HTTP listener |
-| `UPSTREAM` / `-upstream` | `127.0.0.1:50051` | One fixed backend; clients cannot select destinations |
+| `UPSTREAM` / `-upstream` | `127.0.0.1:50051` | Default backend when the client omits a target |
+| `TARGETS_FILE` / `-targets-file` | empty (Compose: `/config/targets.json`) | Live JSON allowlist for client-selected destinations |
 | `ALLOWED_ORIGIN` / `-origin` | `http://localhost:8080` | Exact allowed browser Origin |
 | `TUNNEL_TOKEN` | empty | Optional shared base64url-safe token |
 | `-max-connections` | `256` | Concurrent tunnel admission limit |
@@ -139,7 +151,7 @@ Generated source is checked in. The Python container regenerates from the same
 | `ASSETS` / `-assets` | `web/dist` (image: `/web`) | Demo files |
 
 To try authentication locally, set `TUNNEL_TOKEN` in an ignored `.env` file,
-recreate the bastion, then enter that token in the demo. Tokens are offered in a
+recreate the bridge, then enter that token in the demo. Tokens are offered in a
 WebSocket subprotocol, never in the URL or echoed in the server response. A shared
 token is a prototype access gate, not a user identity system. Native clients may
 omit Origin; authentication, not Origin, controls non-browser access.
@@ -149,7 +161,7 @@ an appropriate origin, and authentication. Do not log WebSocket request headers
 containing the token. There is no arbitrary upstream URL routing.
 
 `/healthz` probes backend TCP availability; `/metrics` exposes the active tunnel
-count. The built-in Docker healthcheck uses local HTTP; override it if enabling
+count. Health checks cover the default upstream only. The built-in Docker healthcheck uses local HTTP; override it if enabling
 direct HTTPS inside the container.
 
 ## Memory
@@ -168,7 +180,7 @@ See [validation notes](docs/VALIDATION.md) for measured prototype results.
 - [Security scope](SECURITY.md)
 - [Third-party acknowledgements](NOTICE.md)
 
-No automatic retry, resumption, compression, or per-RPC bastion routing is
+No automatic retry, resumption, compression, or per-RPC bridge routing is
 implemented. A dropped tunnel fails its active calls. Reconnecting starts a new
 HTTP/2 connection; applications decide whether an operation is safe to retry.
 

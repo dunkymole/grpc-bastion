@@ -2,13 +2,15 @@
 
 ## v0.1 — working reference prototype
 
-- [x] Standard-library-only Go bastion and scratch image.
+- [x] Standard-library-only Go bridge and scratch image.
 - [x] Separate Python gRPC service container.
 - [x] Standard generated Protobuf types and Connect typed facade.
 - [x] All four RPC shapes, real duplex, multiplexing, trailers, half-close.
 - [x] Cancellation, deadlines, connection loss, explicit reconnect.
 - [x] Versioned channel profile, optional auth, origin checks, fixed memory buffers.
 - [x] Repeatable unit, fuzz, and Python interoperability tests.
+
+- [x] Runnable TypeScript examples and client-selected, live-allowlisted destinations.
 
 ## v0.2 — protocol hardening
 
@@ -29,5 +31,5 @@
 - Add scoped identity integration and deployment examples.
 - Obtain independent protocol/security review; define a stable wire-profile policy.
 
-Compression, transparent resumption, per-RPC routing in the bastion, and a bespoke
+Compression, transparent resumption, per-RPC routing in the bridge, and a bespoke
 RPC code generator are not prerequisites. Changes must preserve the opaque relay.

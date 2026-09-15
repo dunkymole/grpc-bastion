@@ -2,7 +2,7 @@
 
 Issues and pull requests are welcome. Start with the README and architecture.
 
-Keep the bastion standard-library-only and application-blind. It must not parse
+Keep the bridge standard-library-only and application-blind. It must not parse
 HTTP/2, gRPC, or protobuf, or allocate a full buffer based on an untrusted frame
 length. New RPC semantics belong in the browser transport or backend.
 

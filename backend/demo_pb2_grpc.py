@@ -35,22 +35,22 @@ class DemoServiceStub:
             channel: A grpc.Channel.
         """
         self.Echo = channel.unary_unary(
-                '/bastion.demo.v1.DemoService/Echo',
+                '/bridge.demo.v1.DemoService/Echo',
                 request_serializer=demo__pb2.Message.SerializeToString,
                 response_deserializer=demo__pb2.Message.FromString,
                 _registered_method=True)
         self.Count = channel.unary_stream(
-                '/bastion.demo.v1.DemoService/Count',
+                '/bridge.demo.v1.DemoService/Count',
                 request_serializer=demo__pb2.Message.SerializeToString,
                 response_deserializer=demo__pb2.Message.FromString,
                 _registered_method=True)
         self.Collect = channel.stream_unary(
-                '/bastion.demo.v1.DemoService/Collect',
+                '/bridge.demo.v1.DemoService/Collect',
                 request_serializer=demo__pb2.Message.SerializeToString,
                 response_deserializer=demo__pb2.Message.FromString,
                 _registered_method=True)
         self.Chat = channel.stream_stream(
-                '/bastion.demo.v1.DemoService/Chat',
+                '/bridge.demo.v1.DemoService/Chat',
                 request_serializer=demo__pb2.Message.SerializeToString,
                 response_deserializer=demo__pb2.Message.FromString,
                 _registered_method=True)
@@ -108,9 +108,9 @@ def add_DemoServiceServicer_to_server(servicer, server):
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'bastion.demo.v1.DemoService', rpc_method_handlers)
+            'bridge.demo.v1.DemoService', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('bastion.demo.v1.DemoService', rpc_method_handlers)
+    server.add_registered_method_handlers('bridge.demo.v1.DemoService', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
@@ -131,7 +131,7 @@ class DemoService:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/bastion.demo.v1.DemoService/Echo',
+            '/bridge.demo.v1.DemoService/Echo',
             demo__pb2.Message.SerializeToString,
             demo__pb2.Message.FromString,
             options,
@@ -158,7 +158,7 @@ class DemoService:
         return grpc.experimental.unary_stream(
             request,
             target,
-            '/bastion.demo.v1.DemoService/Count',
+            '/bridge.demo.v1.DemoService/Count',
             demo__pb2.Message.SerializeToString,
             demo__pb2.Message.FromString,
             options,
@@ -185,7 +185,7 @@ class DemoService:
         return grpc.experimental.stream_unary(
             request_iterator,
             target,
-            '/bastion.demo.v1.DemoService/Collect',
+            '/bridge.demo.v1.DemoService/Collect',
             demo__pb2.Message.SerializeToString,
             demo__pb2.Message.FromString,
             options,
@@ -212,7 +212,7 @@ class DemoService:
         return grpc.experimental.stream_stream(
             request_iterator,
             target,
-            '/bastion.demo.v1.DemoService/Chat',
+            '/bridge.demo.v1.DemoService/Chat',
             demo__pb2.Message.SerializeToString,
             demo__pb2.Message.FromString,
             options,

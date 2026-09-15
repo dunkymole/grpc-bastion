@@ -49,6 +49,7 @@ button("connect").onclick = async () => {
     connection = await openChannel(
       `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/tunnel`,
       value("token"),
+      { target: value("target") },
     );
     client = createClient(DemoService, createTunnelTransport(connection));
     enabled(true);

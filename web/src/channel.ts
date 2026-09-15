@@ -10,8 +10,15 @@ const sleep = (ms: number) =>
 export async function openChannel(
   url: string,
   token = "",
+  options: { target?: string } = {},
 ): Promise<H2Connection> {
-  const ws = new WebSocket(url, token ? [PROFILE, `auth.${token}`] : [PROFILE]);
+  const endpoint = new URL(url);
+  if (options.target !== undefined)
+    endpoint.searchParams.set("target", options.target);
+  const ws = new WebSocket(
+    endpoint,
+    token ? [PROFILE, `auth.${token}`] : [PROFILE],
+  );
   ws.binaryType = "arraybuffer";
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {

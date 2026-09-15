@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>gRPC Bastion — live transport lab</title>
+    <title>gRPC Bridge — live transport lab</title>
     <style>
       :root {
         color-scheme: dark;
@@ -169,14 +169,16 @@
       <div class="eyebrow">OPEN SOURCE / TRANSPORT LAB</div>
       <h1>Native gRPC. In your browser.</h1>
       <p>
-        One connection. Four RPC patterns. A tiny bastion that just moves bytes.
+        One connection. Four RPC patterns. A tiny bridge that just moves bytes.
       </p>
       <div class="architecture">
         <strong>Browser · HTTP/2</strong><span>← WebSocket →</span
-        ><strong>Go bastion</strong><span>← h2c →</span
+        ><strong>Go bridge</strong><span>← h2c →</span
         ><strong>Python · gRPC</strong>
       </div>
       <div class="connection">
+        <label for="target">Backend destination</label>
+        <input id="target" value="python-demo:50051" autocomplete="off" />
         <label for="token">Tunnel token</label
         ><input
           id="token"
@@ -261,7 +263,7 @@
       </div>
       <p class="footer">
         Prototype v0.1 · No RPC translation · No automatic retries ·
-        <a href="https://github.com/dunkymole/grpc-bastion">Source & design</a>
+        <a href="https://github.com/dunkymole/grpc-bridge">Source & design</a>
       </p>
     </main>
     <script type="module" src="/demo.js"></script>

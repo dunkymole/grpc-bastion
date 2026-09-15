@@ -10,12 +10,12 @@ with Go 1.27.1, Python 3.12, grpcio 1.84.0, Node 24.19.0, and Chrome.
 - A three-second parser fuzz run completed 122,421 executions without a failure.
   This is a smoke test, not sustained fuzzing or conformance certification.
 - TypeScript strict compilation and gRPC framing/status unit tests passed.
-- The Python interoperability suite passed through the containerized bastion.
+- The Python interoperability suite passed through the containerized bridge.
 - The same nine interoperability checks passed in Chrome's actual WebSocket and
   browser HTTP/2 client; the page displayed `ALL CHECKS PASSED`.
 - The connection-loss test rejected an in-flight call and successfully created a
   fresh session without replaying the old operation.
-- A separate token-authenticated bastion passed the same suite and rejected an
+- A separate token-authenticated bridge passed the same suite and rejected an
   incorrect token before upgrading the connection.
 
 The interoperability checks cover all four RPC patterns, responses before bidi
@@ -25,7 +25,8 @@ stream cancellation while preserving the shared connection.
 
 ## Memory sample
 
-Linux `/proc/1/status` of the bastion process reported:
+This baseline was captured before live destination selection was added.
+Linux `/proc/1/status` of the bridge process reported:
 
 | Situation | Resident memory (RSS) | Threads |
 | --- | ---: | ---: |
@@ -44,7 +45,7 @@ Later rebuilds can change that slightly. The Go binary has
 no third-party modules and is built with `CGO_ENABLED=0`.
 
 To reproduce the connection sample, start the stack with project name
-`grpc-bastion`, then run from `web/`:
+`grpc-bridge`, then run from `web/`:
 
 ```sh
 node_modules/.bin/tsx scripts/measure-memory.ts

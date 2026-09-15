@@ -24,15 +24,15 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\ndemo.proto\x12\x0f\x62\x61stion.demo.v1\"9\n\x07Message\x12\x0c\n\x04text\x18\x01 \x01(\t\x12\x0e\n\x06number\x18\x02 \x01(\x05\x12\x10\n\x08\x64\x65lay_ms\x18\x03 \x01(\x05\x32\x89\x02\n\x0b\x44\x65moService\x12:\n\x04\x45\x63ho\x12\x18.bastion.demo.v1.Message\x1a\x18.bastion.demo.v1.Message\x12=\n\x05\x43ount\x12\x18.bastion.demo.v1.Message\x1a\x18.bastion.demo.v1.Message0\x01\x12?\n\x07\x43ollect\x12\x18.bastion.demo.v1.Message\x1a\x18.bastion.demo.v1.Message(\x01\x12>\n\x04\x43hat\x12\x18.bastion.demo.v1.Message\x1a\x18.bastion.demo.v1.Message(\x01\x30\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\ndemo.proto\x12\x0e\x62ridge.demo.v1\"9\n\x07Message\x12\x0c\n\x04text\x18\x01 \x01(\t\x12\x0e\n\x06number\x18\x02 \x01(\x05\x12\x10\n\x08\x64\x65lay_ms\x18\x03 \x01(\x05\x32\x81\x02\n\x0b\x44\x65moService\x12\x38\n\x04\x45\x63ho\x12\x17.bridge.demo.v1.Message\x1a\x17.bridge.demo.v1.Message\x12;\n\x05\x43ount\x12\x17.bridge.demo.v1.Message\x1a\x17.bridge.demo.v1.Message0\x01\x12=\n\x07\x43ollect\x12\x17.bridge.demo.v1.Message\x1a\x17.bridge.demo.v1.Message(\x01\x12<\n\x04\x43hat\x12\x17.bridge.demo.v1.Message\x1a\x17.bridge.demo.v1.Message(\x01\x30\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'demo_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_MESSAGE']._serialized_start=31
-  _globals['_MESSAGE']._serialized_end=88
-  _globals['_DEMOSERVICE']._serialized_start=91
-  _globals['_DEMOSERVICE']._serialized_end=356
+  _globals['_MESSAGE']._serialized_start=30
+  _globals['_MESSAGE']._serialized_end=87
+  _globals['_DEMOSERVICE']._serialized_start=90
+  _globals['_DEMOSERVICE']._serialized_end=347
 # @@protoc_insertion_point(module_scope)

@@ -9,6 +9,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -146,7 +149,11 @@ func TestActualUpgradeAndOpaqueRelay(t *testing.T) {
 		defer c.Close()
 		io.Copy(c, c)
 	}()
-	g := newGateway(config{upstream: listener.Addr().String(), maxConnections: 1})
+	policy := filepath.Join(t.TempDir(), "targets.json")
+	if e := os.WriteFile(policy, []byte(fmt.Sprintf(`{"targets":{%q:{"tls":false}}}`, listener.Addr().String())), 0600); e != nil {
+		t.Fatal(e)
+	}
+	g := newGateway(config{upstream: "127.0.0.1:1", targetsFile: policy, maxConnections: 1})
 	defer g.stop()
 	server := httptest.NewServer(g)
 	defer server.Close()
@@ -156,7 +163,7 @@ func TestActualUpgradeAndOpaqueRelay(t *testing.T) {
 	}
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(3 * time.Second))
-	fmt.Fprintf(c, "GET /tunnel HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Protocol: %s\r\n\r\n", protocol)
+	fmt.Fprintf(c, "GET /tunnel?target=%s HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Protocol: %s\r\n\r\n", url.QueryEscape(listener.Addr().String()), protocol)
 	reader := bufio.NewReader(c)
 	response, e := http.ReadResponse(reader, nil)
 	if e != nil {
@@ -181,6 +188,43 @@ func TestActualUpgradeAndOpaqueRelay(t *testing.T) {
 	io.ReadFull(reader, got)
 	if !bytes.Equal(got, payload) {
 		t.Fatal("relay changed bytes")
+	}
+}
+
+func TestDestinationPolicyReload(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "targets.json")
+	g := newGateway(config{upstream: "default:50051", targetsFile: file, maxConnections: 1})
+	r := request()
+	r.URL.RawQuery = "target=added.internal%3A50051"
+	write := func(data string) {
+		t.Helper()
+		if e := os.WriteFile(file, []byte(data), 0600); e != nil {
+			t.Fatal(e)
+		}
+	}
+	write(`{"targets":{}}`)
+	if _, _, status := g.destination(r); status != 403 {
+		t.Fatal(status)
+	}
+	write(`{"targets":{"added.internal:50051":{"tls":true}}}`)
+	if target, tls, status := g.destination(r); target != "added.internal:50051" || !tls || status != 0 {
+		t.Fatalf("reload failed: %s %t %d", target, tls, status)
+	}
+	write(`{"targets":{}}`)
+	if _, _, status := g.destination(r); status != 403 {
+		t.Fatal("removed target still allowed")
+	}
+	for _, data := range []string{`{broken`, `{"targets":{}} {}`, strings.Repeat(" ", 65537)} {
+		write(data)
+		if _, _, status := g.destination(r); status != 503 {
+			t.Fatalf("invalid config accepted: %d", status)
+		}
+	}
+	for _, query := range []string{"target=a:0", "target=a:65536", "target=:80", "target=http://a:80", "target=a:80&target=b:80", "target=%zz"} {
+		r.URL.RawQuery = query
+		if _, _, status := g.destination(r); status != 400 {
+			t.Fatalf("invalid target accepted: %s %d", query, status)
+		}
 	}
 }
 func FuzzRelay(f *testing.F) {

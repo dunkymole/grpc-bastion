@@ -1,5 +1,5 @@
 syntax = "proto3";
-package bastion.demo.v1;
+package bridge.demo.v1;
 
 service DemoService {
   rpc Echo(Message) returns (Message);

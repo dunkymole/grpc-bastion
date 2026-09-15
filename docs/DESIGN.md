@@ -4,7 +4,7 @@
 
 Enable full-duplex, typed gRPC in browsers while retaining real HTTP/2 semantics.
 The only connection protocol this project defines is a thin tunnel profile.
-The bastion must remain application-blind and memory-bounded: it never sees
+The bridge must remain application-blind and memory-bounded: it never sees
 service descriptors, decodes protobufs, parses HTTP/2, or remaps stream IDs.
 
 This document reconstructs the agreed architecture from the supplied design
@@ -20,8 +20,8 @@ in the imported conversation; this is the implementation's own design record.
 3. `@debdattabasu/h2ts` implements browser HTTP/2 and HPACK. It provides stream IDs,
    DATA/HEADERS/trailers, flow-control windows, RST_STREAM, PING, and GOAWAY.
 4. Our bounded WebSocket adapter carries that byte stream over one channel.
-5. The Go bastion removes/adds WebSocket framing and relays opaque bytes over one
-   fixed TCP or verified TLS connection to the backend.
+5. The Go bridge removes/adds WebSocket framing and relays opaque bytes over one
+   selected TCP or verified TLS connection to the backend.
 
 HTTP/2 DATA frames and WebSocket messages are not gRPC message boundaries.
 Fragments can divide any HTTP/2 or gRPC header or payload.
@@ -38,7 +38,10 @@ JSON handshake or custom per-RPC framing.
   Only the profile is selected/echoed. Constant-time credential comparison.
 - Browser Origin must exactly match the configured scheme/host/port; missing
   Origin is permitted for native clients. Never use Origin as authentication.
-- A single configured upstream is connected before the server sends 101. Dial
+- The client selects `host:port` through the outer `target` query parameter.
+  A bounded JSON allowlist is reread for each non-default selection. The bridge
+  resolves the allowed address and connects before sending 101. Missing targets
+  use `UPSTREAM`. See [routing](CLIENT-AND-ROUTING.md). Dial
   failure returns 502; connection capacity returns 503; authentication returns
   401; invalid framing/profile returns 400; denied origin returns 403.
 - After upgrade, binary and continuation payloads form a continuous byte stream.
@@ -99,7 +102,7 @@ requires h2 ALPN. h2c is a trusted-network deployment choice, not end-to-end TLS
 One connection selects one backend. Horizontal scaling distributes tunnels,
 not individual RPCs inside a tunnel. Affinity exists for the connection lifetime.
 Application session persistence and logical units of work belong in backend
-services; the bastion has no replay log or shared session database.
+services; the bridge has no replay log or shared session database.
 
 ## Deliberate prototype limits
 

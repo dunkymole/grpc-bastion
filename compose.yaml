@@ -1,13 +1,16 @@
 services:
-  bastion:
+  bridge:
     build: .
     ports:
       - "127.0.0.1:8080:8080"
     environment:
       UPSTREAM: backend:50051
+      TARGETS_FILE: /config/targets.json
       ALLOWED_ORIGIN: http://localhost:8080
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
       GOMEMLIMIT: 48MiB
+    volumes:
+      - ./config:/config:ro
     depends_on:
       backend:
         condition: service_healthy
@@ -17,6 +20,9 @@ services:
     mem_limit: 64m
     pids_limit: 128
   backend:
+    networks:
+      default:
+        aliases: [python-demo]
     build:
       context: .
       dockerfile: backend/Dockerfile

@@ -1,5 +1,5 @@
 // Run from web/: node_modules/.bin/tsx scripts/measure-memory.ts
-// Measures Linux RSS of the actual bastion PID, not the inspection process.
+// Measures Linux RSS of the actual bridge PID, not the inspection process.
 import { spawnSync } from "node:child_process";
 import { openChannel } from "../src/channel.js";
 import { createTunnelTransport } from "../src/transport.js";
@@ -12,10 +12,10 @@ function measure(label: string) {
     [
       "run",
       "--rm",
-      "--pid=container:grpc-bastion-bastion-1",
+      "--pid=container:grpc-bridge-bridge-1",
       "--entrypoint",
       "python",
-      "grpc-bastion_backend",
+      "grpc-bridge_backend",
       "-c",
       "print(''.join(l for l in open('/proc/1/status') if l.startswith(('VmRSS:', 'Threads:'))))",
     ],

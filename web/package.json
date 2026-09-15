@@ -1,12 +1,13 @@
 {
-  "name": "@grpc-bastion/browser",
+  "name": "@grpc-bridge/browser",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit && node build.mjs",
     "test": "tsx --test test/*.test.ts",
-    "test:e2e": "tsx --test test/*.e2e.ts"
+    "test:e2e": "tsx --test test/*.e2e.ts",
+    "example": "tsx examples/run.ts"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.15.0",

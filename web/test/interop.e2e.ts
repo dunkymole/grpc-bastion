@@ -14,7 +14,7 @@ test(
   },
 );
 test(
-  "Python interoperability through a single bastion tunnel",
+  "Python interoperability through a single bridge tunnel",
   { timeout: 30000 },
   async () => {
     const channel = await openChannel(url, process.env.TUNNEL_TOKEN ?? "");
