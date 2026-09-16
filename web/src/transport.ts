@@ -12,7 +12,16 @@ import type { H2Connection } from "@debdattabasu/h2ts";
 import { frame, unframe, validateStatus } from "./framing.js";
 
 /** Standard Connect typed clients, with native gRPC bytes inside HTTP/2. */
-export function createTunnelTransport(connection: H2Connection): Transport {
+export function createTunnelTransport(
+  connection: H2Connection,
+  options: { bearerToken?: string } = {},
+): Transport {
+  // Opt-in default metadata; an explicit per-call authorization takes precedence.
+  const authorization = options.bearerToken
+    ? new Headers({ authorization: `Bearer ${options.bearerToken}` }).get(
+        "authorization",
+      )!
+    : undefined;
   async function start<I extends DescMessage, O extends DescMessage>(
     method: Omit<DescMethod, "input" | "output"> & { input: I; output: O },
     signal: AbortSignal | undefined,
@@ -64,6 +73,8 @@ export function createTunnelTransport(connection: H2Connection): Transport {
       { highWaterMark: 0 },
     );
     const headers = new Headers(header);
+    if (authorization && !headers.has("authorization"))
+      headers.set("authorization", authorization);
     headers.set("content-type", "application/grpc");
     headers.set("te", "trailers");
     headers.set("grpc-accept-encoding", "identity");

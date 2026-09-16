@@ -9,10 +9,16 @@ export async function connectDemo(
   gatewayUrl: string,
   tunnelToken = "",
   target = "python-demo:50051",
+  options: { forwardToken?: boolean } = {},
 ) {
   // The bridge authorizes and resolves this host:port before HTTP/2 starts.
   const channel = await openChannel(gatewayUrl, tunnelToken, { target });
-  const client = createClient(DemoService, createTunnelTransport(channel));
+  const client = createClient(
+    DemoService,
+    createTunnelTransport(channel, {
+      bearerToken: options.forwardToken ? tunnelToken : undefined,
+    }),
+  );
   return { client, close: () => channel.close() };
 }
 
@@ -22,8 +28,14 @@ export async function runExamples(
   tunnelToken = "",
   log: (message: string) => void = console.log,
   target = "python-demo:50051",
+  options: { forwardToken?: boolean } = {},
 ) {
-  const { client, close } = await connectDemo(gatewayUrl, tunnelToken, target);
+  const { client, close } = await connectDemo(
+    gatewayUrl,
+    tunnelToken,
+    target,
+    options,
+  );
   try {
     // Unary. This metadata reaches Python inside HTTP/2. The gateway does not
     // inspect it, and it cannot change which backend this tunnel connects to.

@@ -51,7 +51,14 @@ button("connect").onclick = async () => {
       value("token"),
       { target: value("target") },
     );
-    client = createClient(DemoService, createTunnelTransport(connection));
+    client = createClient(
+      DemoService,
+      createTunnelTransport(connection, {
+        bearerToken: (el("forward-token") as HTMLInputElement).checked
+          ? value("token")
+          : undefined,
+      }),
+    );
     enabled(true);
     el("status").textContent = "Connected · one HTTP/2 session";
     const current = connection;

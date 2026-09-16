@@ -138,6 +138,10 @@ Generated source is checked in. The Python container regenerates from the same
 
 ## Configuration
 
+See the [complete configuration reference](docs/CONFIGURATION.md) for every flag,
+environment variable, destination policy field, client option, and fixed limit.
+Token forwarding to backend RPCs is optional and disabled by default.
+
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `LISTEN` / `-listen` | `127.0.0.1:8080` (image: `0.0.0.0:8080`) | HTTP listener |

@@ -99,3 +99,11 @@ Likewise HTTP/2 `:authority` is separate from the TCP destination. The prototype
 client currently sends `backend` as its authority; exposing a configurable
 authority for upstream virtual hosting remains future work. To reach another
 backend, open another channel. Each channel can still multiplex many RPCs.
+
+## Forwarding authentication to the backend
+
+Use `connectDemo(url, token, target, { forwardToken: true })` to send the same
+token as RPC bearer metadata. Forwarding is off by default. For separate backend
+credentials use `createTunnelTransport(channel, { bearerToken })`. See the
+[configuration reference](CONFIGURATION.md#client-authentication-and-forwarding)
+for precedence, security considerations, and runner environment variables.

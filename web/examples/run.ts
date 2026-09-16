@@ -7,4 +7,5 @@ await runExamples(
   process.env.TUNNEL_TOKEN ?? "",
   console.log,
   process.env.BACKEND_TARGET ?? "python-demo:50051",
+  { forwardToken: process.env.FORWARD_TUNNEL_TOKEN === "true" },
 );
