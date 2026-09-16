@@ -7,10 +7,6 @@ The only connection protocol this project defines is a thin tunnel profile.
 The bridge must remain application-blind and memory-bounded: it never sees
 service descriptors, decodes protobufs, parses HTTP/2, or remaps stream IDs.
 
-This document reconstructs the agreed architecture from the supplied design
-conversation. The original attached 24-section Markdown document was not available
-in the imported conversation; this is the implementation's own design record.
-
 ## Layering
 
 1. `.proto` describes all four RPC shapes. Standard generators produce Python
