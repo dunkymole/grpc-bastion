@@ -21,8 +21,8 @@ Generated Protobuf types + Connect typed client
 ```
 
 This is a working **v0.1 prototype**, not a claim of production conformance.
-It is a transport project, not a RAG engine. RAG and agent services can use the
-same standard gRPC service contracts as any other application.
+It is a general-purpose transport for connecting browser clients to standard
+gRPC services.
 
 ## Run it
 
