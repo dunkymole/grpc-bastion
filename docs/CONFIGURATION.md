@@ -113,7 +113,8 @@ These are client settings for `cd web && npm run example`, not bridge settings.
 - Python image sets `PYTHONDONTWRITEBYTECODE=1` and `PYTHONUNBUFFERED=1`.
 - Image health checks run every 10 seconds with a three-second Docker timeout.
   `/healthz` tests only the default backend's TCP reachability, with a one-second dial
-  timeout. `/metrics` exposes `bridge_active_tunnels`.
+  timeout. `/metrics` exposes [connection, traffic, failure, and dial metrics](METRICS.md).
+  Metrics are always enabled on the same listener, without tunnel-token authentication.
 
 Go also supports its standard runtime environment variables; the project only
 sets `GOMEMLIMIT`. These do not replace container memory limits.

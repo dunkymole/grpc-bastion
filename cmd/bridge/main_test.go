@@ -189,6 +189,23 @@ func TestActualUpgradeAndOpaqueRelay(t *testing.T) {
 	if !bytes.Equal(got, payload) {
 		t.Fatal("relay changed bytes")
 	}
+	// Finish the tunnel, then verify counters have settled after both relay legs.
+	c.Close()
+	deadline := time.Now().Add(time.Second)
+	for g.metrics.closed.Load() != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if g.metrics.opened.Load() != 1 || g.metrics.closed.Load() != 1 || g.metrics.established.Load() != 0 {
+		t.Fatal("incorrect tunnel lifecycle metrics")
+	}
+	if g.metrics.toBackend.Load() != uint64(len(payload)) || g.metrics.toClient.Load() != uint64(len(payload)) {
+		t.Fatalf("incorrect byte counts: %d %d", g.metrics.toBackend.Load(), g.metrics.toClient.Load())
+	}
+	g.metrics.dial.mu.Lock()
+	defer g.metrics.dial.mu.Unlock()
+	if g.metrics.dial.count != 1 {
+		t.Fatal("successful dial was not measured")
+	}
 }
 
 func TestDestinationPolicyReload(t *testing.T) {

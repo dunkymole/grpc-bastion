@@ -164,8 +164,9 @@ The default demo uses loopback HTTP/WS. For external deployment configure TLS,
 an appropriate origin, and authentication. Do not log WebSocket request headers
 containing the token. There is no arbitrary upstream URL routing.
 
-`/healthz` probes backend TCP availability; `/metrics` exposes the active tunnel
-count. Health checks cover the default upstream only. The built-in Docker healthcheck uses local HTTP; override it if enabling
+`/healthz` probes backend TCP availability; `/metrics` exposes connection counts,
+establishment failures, forwarded bytes, and backend dial duration. See the
+[metrics reference](docs/METRICS.md) for definitions and Prometheus queries. Health checks cover the default upstream only. The built-in Docker healthcheck uses local HTTP; override it if enabling
 direct HTTPS inside the container.
 
 ## Memory

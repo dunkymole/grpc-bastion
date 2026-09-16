@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -101,6 +102,7 @@ type gateway struct {
 	slots    chan struct{}
 	mu       sync.Mutex
 	active   map[net.Conn]struct{}
+	metrics  metrics
 	stopping bool
 }
 
@@ -121,18 +123,29 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	g.metrics.attempts.Add(1)
+	failure := "upgrade"
+	defer func() {
+		if failure != "" {
+			g.metrics.fail(failure)
+		}
+	}()
+	reject := func(message string, status int, reason string) {
+		failure = reason
+		http.Error(w, message, status)
+	}
 	if r.Method != "GET" || !contains(r.Header.Get("Connection"), "upgrade") || !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-		http.Error(w, "WebSocket upgrade required", http.StatusBadRequest)
+		reject("WebSocket upgrade required", http.StatusBadRequest, "handshake")
 		return
 	}
 	key, err := base64.StdEncoding.DecodeString(r.Header.Get("Sec-WebSocket-Key"))
 	if err != nil || len(key) != 16 || r.Header.Get("Sec-WebSocket-Version") != "13" {
-		http.Error(w, "invalid WebSocket handshake", 400)
+		reject("invalid WebSocket handshake", 400, "handshake")
 		return
 	}
 	// Exact origin allowlist, including scheme and port. Native clients omit Origin.
 	if origin := r.Header.Get("Origin"); origin != "" && origin != g.origin {
-		http.Error(w, "origin denied", 403)
+		reject("origin denied", 403, "origin")
 		return
 	}
 	offered := strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",")
@@ -147,28 +160,29 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !authenticated {
-		http.Error(w, "unauthorized", 401)
+		reject("unauthorized", 401, "auth")
 		return
 	}
 	if selected == "" {
-		http.Error(w, "unsupported tunnel profile", 400)
+		reject("unsupported tunnel profile", 400, "profile")
 		return
 	}
 	select {
 	case g.slots <- struct{}{}:
 		defer func() { <-g.slots }()
 	default:
-		http.Error(w, "connection capacity reached", 503)
+		reject("connection capacity reached", 503, "capacity")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	destination, useTLS, status := g.destination(r)
 	if status != 0 {
 		cancel()
-		http.Error(w, "destination unavailable or not allowed", status)
+		reject("destination unavailable or not allowed", status, map[int]string{400: "destination", 403: "destination_denied", 503: "policy"}[status])
 		return
 	}
 	defer cancel()
+	dialStart := time.Now()
 	var upstream net.Conn
 	if useTLS {
 		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"h2"}}
@@ -181,14 +195,16 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		upstream, err = (&net.Dialer{}).DialContext(ctx, "tcp", destination)
 	}
+	g.metrics.dial.observe(time.Since(dialStart).Seconds())
 	if err != nil {
-		http.Error(w, "upstream unavailable", 502)
+		reject("upstream unavailable", 502, "dial")
 		return
 	}
+	upstream = &countedConn{Conn: upstream, bytes: &g.metrics.toBackend}
 	defer upstream.Close()
 	h, ok := w.(http.Hijacker)
 	if !ok {
-		http.Error(w, "upgrade unavailable", 500)
+		reject("upgrade unavailable", 500, "upgrade")
 		return
 	}
 	conn, rw, err := h.Hijack()
@@ -198,6 +214,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 	g.mu.Lock()
 	if g.stopping {
+		failure = "shutdown"
 		g.mu.Unlock()
 		return
 	}
@@ -210,8 +227,12 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if rw.Flush() != nil {
 		return
 	}
+	failure = ""
+	g.metrics.opened.Add(1)
+	g.metrics.established.Add(1)
+	defer func() { g.metrics.established.Add(-1); g.metrics.closed.Add(1) }()
 	conn.SetDeadline(time.Time{})
-	ws := &socket{conn: conn, reader: rw.Reader}
+	ws := &socket{conn: conn, reader: rw.Reader, downstreamBytes: &g.metrics.toClient}
 	done := make(chan struct{})
 	defer close(done)
 	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
@@ -267,9 +288,10 @@ func (g *gateway) stop() {
 }
 
 type socket struct {
-	conn    net.Conn
-	reader  *bufio.Reader
-	writeMu sync.Mutex
+	conn            net.Conn
+	reader          *bufio.Reader
+	writeMu         sync.Mutex
+	downstreamBytes *atomic.Uint64
 }
 
 func (s *socket) writeFrame(op byte, p []byte) error {
@@ -292,6 +314,9 @@ func (s *socket) writeFrame(op byte, p []byte) error {
 	}
 	if err := writeAll(s.conn, header[:n]); err != nil {
 		return err
+	}
+	if op == 2 && s.downstreamBytes != nil {
+		return writeAll(countedWriter{s.conn, s.downstreamBytes}, p)
 	}
 	return writeAll(s.conn, p)
 }
@@ -477,10 +502,7 @@ func main() {
 		c.Close()
 		w.Write([]byte("ok\n"))
 	})
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("bridge_active_tunnels " + strconv.Itoa(len(g.slots)) + "\n"))
-	})
+	mux.HandleFunc("/metrics", g.serveMetrics)
 	mux.Handle("/", http.FileServer(http.Dir(*assets)))
 	server := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
 	signals := make(chan os.Signal, 1)
